@@ -1,6 +1,4 @@
 /*
-xung 210 
-tỉ số truyền 1:30
 thông số chân:
  in1 25, in2 26, pwma 27, en1a 5, en1b 17, (trái)      
  in3 32, in4 33, pwmb 14, en2a19, en2b 18 (phải)
@@ -8,12 +6,15 @@ thông số chân:
 
 
 
-
+R xe = 1,5cm
+xung 210 
+tỉ số truyền 1:30
 
 
 
 
 */
+#include <Wire.h>
 // Encoder pins
 #define ENCA1 5  // Encoder A (Left motor)
 #define ENCB1 17 // Encoder B (Left motor)
@@ -37,32 +38,35 @@ long prevT = 0;
 float eprev = 0;
 float eintegral = 0;
 
+#define TOF_FRONT_ADDRESS 0x46  // Front sensor I2C address
+#define TOF_LEFT_ADDRESS  0x4B  // Left sensor I2C address
+#define TOF_RIGHT_ADDRESS 0x52  // Right sensor I2C address
+
+// Define sensor registers (based on the TOF10120 sensor datasheet)
+#define TOF_REG_DISTANCE 0x00  // Register to read distance data
+
+#define NUM_READINGS 10  // Number of readings to average
+uint16_t frontDistanceReadings[NUM_READINGS];
+uint16_t leftDistanceReadings[NUM_READINGS];
+uint16_t rightDistanceReadings[NUM_READINGS];
+
+#define INPUT_DISTANCE 150  // in mm (converted from cm to match TOF10120 units)
+#define ERROR_DIST 50  // in mm (converted to mm)
+#define SPEED 95
+#define MAX_DIFFERNCE 10
+#define MAX_TURN_SPEED 10
+#define CALIBRATION 3
+#define MAX_ALLIGN_ANGLE 5  // in mm
+#define COLLISION_DISTANCE 100  // in mm
+
 // Constants for calibration
 const float Kp = 0.1;   // Proportional constant to fix straight movement
 const float Kd = 0.02;  // Derivative constant for adjusting drift
 const float Ki = 0.02;   // Integral constant
-const int targetTicksStraight = 180;  // Adjusted encoder ticks for 90-degree turn
 
-
-const int targetTicksTurn = 125;  // Adjusted ticks for forward movement
-const int targetforward = 210;
-// Function to show data on Serial Plotter
-void showOnSerialPlotter(int error, float correction, int motorLeft, int motorRight) {
-  // Print in a format the Serial Plotter can understand
-  Serial.print("posLeft: ");
-  Serial.print(posLeft);
-  Serial.print(", posRight: ");
-  Serial.print(posRight);
-  Serial.print(", error: ");
-  Serial.print(error);
-  Serial.print(", correction: ");
-  Serial.print(correction);
-  Serial.print(", motorLeft: ");
-  Serial.print(motorLeft);
-  Serial.print(", motorRight: ");
-  Serial.println(motorRight);  // Newline at the end
-}
-
+const int targetTicksStraight = 210;  // Adjusted ticks for forward movement
+const int targetTicks = 210;  //  Adjusted encoder ticks for 90-degree turn 
+const int speed = 255; //1-255
 void setup() {
   Serial.begin(9600);
   
@@ -87,25 +91,34 @@ void setup() {
 
 void loop() {
   // In giá trị encoder ra màn hình Serial mỗi giây
-  
+  uint16_t frontDistance = readTOFSensor(TOF_FRONT_ADDRESS);
+  uint16_t leftDistance = readTOFSensor(TOF_LEFT_ADDRESS);
+  uint16_t rightDistance = readTOFSensor(TOF_RIGHT_ADDRESS);
   Serial.print("Encoder Left: ");
   Serial.print(posLeft);
   Serial.print("  Encoder Right: ");
   Serial.println(posRight);
   // Stop after turning 90 degrees
   // Perform 90-degree right turn
-  moveforward();
-  delay(500);
-  // Move forward after turning
-  turnright90(targetTicksTurn);  // Move forward for 500 encoder ticks (adjustable)
+  moveForward();
+  // delay(500);
+  // // Move forward after turning
+  // turnRight();
 
-  delay(500);// Stop the robot after moving forward
-  moveforward();
-  delay(500);
-  turnLeft90(targetTicksTurn);
-
-  //stopMotors();
-  //delay(5000);  // Pause for 5 seconds before restarting the loop
+  // delay(500);// Stop the robot after moving forward
+  // moveForward();
+  // delay(500);
+  // turnLeft();
+  // delay(500);
+  // turnaround();
+  // stopMotors();
+  // delay(5000);  // Pause for 5 seconds before restarting the loop
+  if (check_collision(frontDistance)) {
+    delay(500);
+    turnRight();
+    delay(500);
+  }
+  delay(1);
 }
 
 // Function to read encoder value for the left motor
@@ -152,32 +165,32 @@ void stopMotors() {
 }
 
 //Function to move forward while keeping the robot straight
-void moveforward() {
+void moveForward() {
   posLeft = 0;
   posRight = 0;
-  int pos;
-  //while (abs(pos) < targetTicksStraight) {
-    // Left motor forward, right motor backward for turning
-  //  noInterrupts();
-  //  pos = (posLeft + posRight) / 2;
-  //  interrupts();
-  //  int error = targetTicksStraight - abs(pos);
-  //  float PID = 1 * error;
-  //  setMotor(PID, PWM_A, IN1_A, IN2_A);   // Adjust speed as necessary
-  //  setMotor(- PID * 0.1, PWM_B, IN3_B, IN4_B);  // Adjust speed as necessary
-  //  Serial.println(posRight);
-  //  delay(1);
-  //}
-  while (abs(posRight) < targetTicksTurn) {
-    // Left motor forward, right motor backward for turning
-    setMotor(150, PWM_A, IN1_A, IN2_A);   // Adjust speed as necessary
-    setMotor(-150, PWM_B, IN3_B, IN4_B);  // Adjust speed as necessary
+  int pos = 0;
+  // while (abs(pos) < targetTicksStraight) {
+  //   //Left motor forward, right motor backward for turning
+  //   noInterrupts();
+  //   pos = (posLeft + posRight) / 2;
+  //   interrupts();
+  //   int error = targetTicksStraight - abs(pos);
+  //   float PID = 1 * error;
+  //   setMotor(PID, PWM_A, IN1_A, IN2_A);   // Adjust speed as necessary
+  //   setMotor(-PID, PWM_B, IN3_B, IN4_B);  // Adjust speed as necessary
+  //   Serial.println(posRight);
+  //   delay(1);
+  // }
+  while (abs(posRight) < targetTicksStraight && abs(posLeft) < targetTicksStraight) {
+  //Left motor forward, right motor backward for turning
+    setMotor(speed, PWM_A, IN1_A, IN2_A);   // Adjust speed as necessary
+    setMotor(-speed, PWM_B, IN3_B, IN4_B);  // Adjust speed as necessary
+    delay(1);
   }
-  delay(1);
   stopMotors();  // Stop after turning 90 degrees
 }
 // Function to perform a 90-degree left turn
-void turnLeft90(int targetTicks){
+void turnLeft(){
   posLeft = 0;
   posRight = 0;
 
@@ -187,17 +200,19 @@ void turnLeft90(int targetTicks){
     int error = posRight - posLeft;
     
     // Adjust motor speeds to minimize the drift
-    float correction = Kp * error + Kd * (eprev - error);
+    float correction = Kp * error + Kd * (eprev - error);// + Ki * eintegral;
+    eintegral += error;
     eprev = error;
     
-    setMotor(255 - correction, PWM_A, IN2_A, IN1_A);  // Adjust left motor speed
-    setMotor(255 + correction, PWM_B, IN4_B, IN3_B);  // Adjust right motor speed
+    setMotor(speed - correction, PWM_A, IN2_A, IN1_A);  // Adjust left motor speed
+    setMotor(speed + correction, PWM_B, IN4_B, IN3_B);  // Adjust right motor speed
+    delay(5);  // Tốc độ vòng lặp
   }
 
   stopMotors();  // Stop after moving forward the set distance
 }
 // Function to perform a 90-degree right turn
-void turnright90(long targetTicks) {
+void turnRight() {
   posLeft = 0;
   posRight = 0;
 
@@ -206,11 +221,49 @@ void turnright90(long targetTicks) {
     int error = posLeft - posRight;
     
     // Adjust motor speeds to minimize the drift
-    float correction = Kp * error + Kd * (eprev - error);
+    float correction = Kp * error + Kd * (eprev - error);// + Ki * eintegral;
+    eintegral += error;
     eprev = error;
-    setMotor(255 - correction, PWM_A, IN1_A, IN2_A);  // Adjust left motor speed
-    setMotor(255 + correction, PWM_B, IN3_B, IN4_B);  // Adjust right motor speed
-    showOnSerialPlotter(error, correction, posLeft, posRight);
+    setMotor(speed - correction, PWM_A, IN1_A, IN2_A);  // Adjust left motor speed
+    setMotor(speed + correction, PWM_B, IN3_B, IN4_B);  // Adjust right motor speed
+    delay(5);  // Tốc độ vòng lặp
   }
   stopMotors();  // Stop after moving forward the set distance
+}
+void turnaround(){
+  int targetTicksTurn = targetTicks*2;
+  posLeft = 0;
+  posRight = 0;
+
+  while (abs(posLeft) < targetTicksTurn && abs(posRight) < targetTicksTurn) {
+    // Calculate the difference in encoder counts between left and right motors
+    int error = posLeft - posRight;
+    
+    // Adjust motor speeds to minimize the drift
+    float correction = Kp * error + Kd * (eprev - error) + Ki * eintegral;
+    eintegral += error;
+    eprev = error;
+    setMotor(speed - correction, PWM_A, IN1_A, IN2_A);  // Adjust left motor speed
+    setMotor(speed + correction, PWM_B, IN3_B, IN4_B);  // Adjust right motor speed
+    delay(5);  // Tốc độ vòng lặp
+  }
+}
+// Collision detection using the front TOF sensor
+bool check_collision(uint16_t frontDistance) {
+  return frontDistance < COLLISION_DISTANCE;
+}
+// Function to read distance from a TOF sensor
+uint16_t readTOFSensor(uint8_t sensorAddress) {
+  uint16_t distance = 0;
+  Wire.beginTransmission(sensorAddress);
+  Wire.write(TOF_REG_DISTANCE);  // Request distance register
+  Wire.endTransmission();
+
+  Wire.requestFrom(sensorAddress, (uint8_t)2);  // Request 2 bytes
+  if (Wire.available() == 2) {
+    uint8_t highByte = Wire.read();
+    uint8_t lowByte = Wire.read();
+    distance = (highByte << 8) | lowByte;  // Combine into 16-bit value
+  }
+  return distance;
 }
