@@ -118,11 +118,11 @@ void loop() {
   //moveForward1();
   //delay(500);
   // // Move forward after turning
-  //turnRight();
+  turnRight();
 
   // delay(500);// Stop the robot after moving forward
   // delay(500);
-  turnLeft();
+  //turnAround();
   // delay(500);
   // turnaround();
   // stopMotors();
@@ -246,24 +246,9 @@ void turnRight() {
   }
   stopMotors();  // Stop after moving forward the set distance
 }
-void turnaround(){
-  int targetTicksTurn = targetTicks*2;
-  posLeft = 0;
-  posRight = 0;
-  int targetTicksLeft = targetTicks;
-  int targetTicksRight = targetTicks - errory;
-  // Continue moving forward while checking encoders
-  while (abs(posLeft) < targetTicksLeft && abs(posRight) < targetTicksRight) {
-    // Calculate the difference in encoder counts between left and right motors
-    int error = posLeft + posRight;
-    
-    // Adjust motor speeds to minimize the drift
-    float correction = Kp * error + Kd * (eprev - error) + Ki * eintegral;
-    eintegral += error;
-    eprev = error;
-    setMotor(speed - correction, PWM_A, IN1_A, IN2_A);  // Adjust left motor speed
-    setMotor(speed + correction, PWM_B, IN3_B, IN4_B);  // Adjust right motor speed
-    delay(5);  // Tốc độ vòng lặp
+void turnAround(){
+  for(int i = 0; i < 2; i++){
+    turnRight();
   }
 }
 // Collision detection using the front TOF sensor
