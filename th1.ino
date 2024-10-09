@@ -1,10 +1,10 @@
 /*
 thông số chân:
- in1 25, in2 26, pwma 27, en1a 5, en1b 17, (trái)      
- in3 32, in4 33, pwmb 14, en2a19, en2b 18 (phải)
+ in1 25, in2 26, pwma 27, en1a 5, en1b 17, (trái)      
+ in3 32, in4 33, pwmb 14, en2a19, en2b 18 (phải)
 
 
-
+kp=0.06
 
 R xe = 1,5cm
 xung 210 
@@ -34,10 +34,25 @@ tỉ số truyền 1:30
 volatile long posLeft = 0;
 volatile long posRight = 0;
 
+// globals
 long prevT = 0;
+int posPrev = 0;
+// Use the "volatile" directive for variables
+// used in an interrupt
+volatile int pos_i = 0;
+volatile float velocity_i = 0;
+volatile long prevT_i = 0;
+
+float v1Filt = 0;
+float v1Prev = 0;
+float v2Filt = 0;
+float v2Prev = 0;
+
 float eprev = 0;
 float eintegral = 0;
-
+int errorx = 1;
+int errory = 30;
+int errorz = 10;
 #define TOF_FRONT_ADDRESS 0x46  // Front sensor I2C address
 #define TOF_LEFT_ADDRESS  0x4B  // Left sensor I2C address
 #define TOF_RIGHT_ADDRESS 0x52  // Right sensor I2C address
@@ -49,7 +64,7 @@ float eintegral = 0;
 uint16_t frontDistanceReadings[NUM_READINGS];
 uint16_t leftDistanceReadings[NUM_READINGS];
 uint16_t rightDistanceReadings[NUM_READINGS];
-
+#define DESIRED_WALL_DISTANCE 40  // Desired distance from the wall (in mm)
 #define INPUT_DISTANCE 150  // in mm (converted from cm to match TOF10120 units)
 #define ERROR_DIST 50  // in mm (converted to mm)
 #define SPEED 95
@@ -60,13 +75,13 @@ uint16_t rightDistanceReadings[NUM_READINGS];
 #define COLLISION_DISTANCE 100  // in mm
 
 // Constants for calibration
-const float Kp = 0.1;   // Proportional constant to fix straight movement
-const float Kd = 0.02;  // Derivative constant for adjusting drift
-const float Ki = 0.02;   // Integral constant
+const float Kp = 1.8;   // Proportional constant to fix straight movement
+const float Kd = 0;  // Derivative constant for adjusting drift
+const float Ki = 0;   // Integral constant
 
-const int targetTicksStraight = 210;  // Adjusted ticks for forward movement
-const int targetTicks = 210;  //  Adjusted encoder ticks for 90-degree turn 
-const int speed = 255; //1-255
+const int targetTicksStraight = 450;  // Adjusted ticks for forward movement
+const int targetTicks = 200;  //  Adjusted encoder ticks for 90-degree turn 
+const int speed = 200; //1-255
 void setup() {
   Serial.begin(9600);
   
@@ -100,25 +115,24 @@ void loop() {
   Serial.println(posRight);
   // Stop after turning 90 degrees
   // Perform 90-degree right turn
-  moveForward();
-  // delay(500);
+  //moveForward1();
+  //delay(500);
   // // Move forward after turning
-  // turnRight();
+  //turnRight();
 
   // delay(500);// Stop the robot after moving forward
-  // moveForward();
   // delay(500);
-  // turnLeft();
+  turnLeft();
   // delay(500);
   // turnaround();
   // stopMotors();
   // delay(5000);  // Pause for 5 seconds before restarting the loop
-  if (check_collision(frontDistance)) {
-    delay(500);
-    turnRight();
-    delay(500);
-  }
-  delay(1);
+  // if (check_collision(frontDistance)) {
+  //   delay(500);
+  //   turnRight();
+  //   delay(500);
+  // }
+  delay(3000);
 }
 
 // Function to read encoder value for the left motor
@@ -157,7 +171,6 @@ void setMotor(float control, int pwmPin, int in1, int in2) {
     digitalWrite(in2, LOW);
   }
 }
-
 // Function to stop both motors
 void stopMotors() {
   setMotor(0, PWM_A, IN1_A, IN2_A);
@@ -172,7 +185,7 @@ void moveForward() {
   // while (abs(pos) < targetTicksStraight) {
   //   //Left motor forward, right motor backward for turning
   //   noInterrupts();
-  //   pos = (posLeft + posRight) / 2;
+  //   pos = (abs(posLeft) + abs(posRight)) / 2;
   //   interrupts();
   //   int error = targetTicksStraight - abs(pos);
   //   float PID = 1 * error;
@@ -193,21 +206,22 @@ void moveForward() {
 void turnLeft(){
   posLeft = 0;
   posRight = 0;
-
-  while (abs(posLeft) < targetTicks && abs(posRight) < targetTicks) {
-    
+  int targetTicksLeft = targetTicks - errorx - errory - errorz;
+  int targetTicksRight = targetTicks + errory;
+  // Continue moving forward while checking encoders
+  while (abs(posLeft) < targetTicksLeft && abs(posRight) < targetTicksRight) {
     // Calculate the difference in encoder counts between left and right motors
-    int error = posRight - posLeft;
+    int error = posLeft - posRight;
     
     // Adjust motor speeds to minimize the drift
-    float correction = Kp * error + Kd * (eprev - error);// + Ki * eintegral;
+    float correction = Kp * error + Kd * (eprev - error);
     eintegral += error;
     eprev = error;
-    
-    setMotor(speed - correction, PWM_A, IN2_A, IN1_A);  // Adjust left motor speed
-    setMotor(speed + correction, PWM_B, IN4_B, IN3_B);  // Adjust right motor speed
+    setMotor(-speed - correction, PWM_A, IN1_A, IN2_A);  // Adjust left motor speed
+    setMotor(-speed - correction, PWM_B, IN3_B, IN4_B);  // Adjust right motor speed
     delay(5);  // Tốc độ vòng lặp
   }
+  stopMotors();  // Stop after moving forward the set distance
 
   stopMotors();  // Stop after moving forward the set distance
 }
@@ -215,13 +229,15 @@ void turnLeft(){
 void turnRight() {
   posLeft = 0;
   posRight = 0;
-
-  while (abs(posLeft) < targetTicks && abs(posRight) < targetTicks) {
+  int targetTicksLeft = targetTicks - errorx + errory;
+  int targetTicksRight = targetTicks + errory;
+  // Continue moving forward while checking encoders
+  while (abs(posLeft) < targetTicksLeft && abs(posRight) < targetTicksRight) {
     // Calculate the difference in encoder counts between left and right motors
     int error = posLeft - posRight;
     
     // Adjust motor speeds to minimize the drift
-    float correction = Kp * error + Kd * (eprev - error);// + Ki * eintegral;
+    float correction = Kp * error + Kd * (eprev - error);
     eintegral += error;
     eprev = error;
     setMotor(speed - correction, PWM_A, IN1_A, IN2_A);  // Adjust left motor speed
@@ -234,10 +250,12 @@ void turnaround(){
   int targetTicksTurn = targetTicks*2;
   posLeft = 0;
   posRight = 0;
-
-  while (abs(posLeft) < targetTicksTurn && abs(posRight) < targetTicksTurn) {
+  int targetTicksLeft = targetTicks;
+  int targetTicksRight = targetTicks - errory;
+  // Continue moving forward while checking encoders
+  while (abs(posLeft) < targetTicksLeft && abs(posRight) < targetTicksRight) {
     // Calculate the difference in encoder counts between left and right motors
-    int error = posLeft - posRight;
+    int error = posLeft + posRight;
     
     // Adjust motor speeds to minimize the drift
     float correction = Kp * error + Kd * (eprev - error) + Ki * eintegral;
@@ -249,9 +267,10 @@ void turnaround(){
   }
 }
 // Collision detection using the front TOF sensor
-bool check_collision(uint16_t frontDistance) {
-  return frontDistance < COLLISION_DISTANCE;
+bool check_collision(uint16_t Distance) {
+  return Distance < COLLISION_DISTANCE;
 }
+
 // Function to read distance from a TOF sensor
 uint16_t readTOFSensor(uint8_t sensorAddress) {
   uint16_t distance = 0;
@@ -266,4 +285,110 @@ uint16_t readTOFSensor(uint8_t sensorAddress) {
     distance = (highByte << 8) | lowByte;  // Combine into 16-bit value
   }
   return distance;
+}
+// Function to follow the wall using the left TOF sensor
+void followWall() {
+  posLeft = 0;
+  posRight = 0;
+  int pos = 0;
+  
+  uint16_t leftDistance = readTOFSensor(TOF_LEFT_ADDRESS);  // Read the left TOF sensor
+
+  while (true) {  // Continuous loop to keep following the wall
+    // Read the current distance from the wall
+    leftDistance = readTOFSensor(TOF_LEFT_ADDRESS);
+    
+    // Calculate error (difference between desired distance and current distance)
+    int error = DESIRED_WALL_DISTANCE - leftDistance;
+    
+    // Apply PID control to calculate correction
+    float correction = Kp * error + Kd * (eprev - error) + Ki * eintegral;
+    eintegral += error;
+    eprev = error;
+    
+    // Adjust motor speeds based on correction
+    int motorSpeedLeft = speed - correction;  // Adjust left motor
+    int motorSpeedRight = speed + correction;  // Adjust right motor
+    
+    // Make sure the motor speeds stay within valid bounds
+    if (motorSpeedLeft > 255) motorSpeedLeft = 255;
+    if (motorSpeedLeft < -255) motorSpeedLeft = -255;
+    if (motorSpeedRight > 255) motorSpeedRight = 255;
+    if (motorSpeedRight < -255) motorSpeedRight = -255;
+    
+    // Set the motor speeds
+    setMotor(motorSpeedLeft, PWM_A, IN1_A, IN2_A);   // Left motor control
+    setMotor(motorSpeedRight, PWM_B, IN3_B, IN4_B);  // Right motor control
+
+    // Break loop if collision is detected (optional)
+    uint16_t frontDistance = readTOFSensor(TOF_FRONT_ADDRESS);
+    if (check_collision(frontDistance)) {
+      stopMotors();  // Stop the robot if a collision is detected
+      break;
+    }
+
+    delay(10);  // Small delay for smoother movement
+  }
+}
+void readVelocity(){
+  // read the position and velocity
+  int pos = 0;
+  float velocity2 = 0;
+  noInterrupts(); // disable interrupts temporarily while reading
+  pos = pos_i;
+  velocity2 = velocity_i;
+  interrupts(); // turn interrupts back on
+
+  // Compute velocity with method 1
+  long currT = micros();
+  float deltaT = ((float) (currT-prevT))/1.0e6;
+  float velocity1 = (pos - posPrev)/deltaT;
+  posPrev = pos;
+  prevT = currT;
+
+  // Convert count/s to RPM
+  float v1 = velocity1/600.0*60.0;
+  float v2 = velocity2/600.0*60.0;
+
+  // Low-pass filter (25 Hz cutoff)
+  v1Filt = 0.854*v1Filt + 0.0728*v1 + 0.0728*v1Prev;
+  v1Prev = v1;
+  v2Filt = 0.854*v2Filt + 0.0728*v2 + 0.0728*v2Prev;
+  v2Prev = v2;
+
+  // Set a target
+  float vt = 100*(sin(currT/1e6)>0);
+
+  // Compute the control signal u
+  float kp = 5;
+  float ki = 10;
+  float e = vt-v1Filt;
+  eintegral = eintegral + e*deltaT;
+  
+  float u = kp*e + ki*eintegral;
+};
+void moveForward1() {
+  posLeft = 0;
+  posRight = 0;
+  int pos = 0;
+  int targetTicksLeft = targetTicksStraight;
+  int targetTicksRight = targetTicksStraight + errorx;
+  // Continue moving forward while checking encoders
+  while (abs(posLeft) < targetTicksLeft && abs(posRight) < targetTicksRight) {
+    noInterrupts(); // disable interrupts temporarily while reading
+    int pos = (abs(posLeft) + abs(posRight))/2;
+    interrupts(); // turn interrupts back on
+    // Calculate the error between the two encoder readings
+    int error = posRight + posLeft;
+    int errory = targetTicksStraight - pos;
+    // Apply a simple proportional controller to correct the drift
+    float correction = Kp * error;
+    // Set the motor speeds
+    setMotor(speed - correction, PWM_A, IN1_A, IN2_A);   // Left motor forward
+    setMotor(-speed - correction, PWM_B, IN3_B, IN4_B);  // Right motor forward
+
+    delay(10);  // Small delay for smoother movement
+  }
+
+  stopMotors();  // Stop after reaching the target distance
 }
